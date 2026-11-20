@@ -445,6 +445,12 @@ build_one() {
 	# ==========================================================================
 	step "[$MODEL_NAME] copying the overlay onto the root of the rootfs"
 
+	# If the overlay ships a single default boot logo, clear any stale
+	# per-theme boot logos left over from a previous image.
+	if [ -f "$ASSETS_DIR/$MODEL_DIR/etc/boot-logo/default.jpeg" ]; then
+		rm -f "$SQUASH_DIR"/etc/boot-logo/dark-theme-*.jpeg "$SQUASH_DIR"/etc/boot-logo/light-theme-*.jpeg
+	fi
+
 	# tar rather than cp: it merges into directories that already exist,
 	# overwrites the files that clash, carries the hidden ones, and behaves the
 	# same way on macOS and on Linux -- none of which is true of `cp -a` on both.

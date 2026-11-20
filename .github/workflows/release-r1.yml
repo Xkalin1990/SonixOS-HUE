@@ -1,0 +1,89 @@
+name: Build and Release SonixOS HUE (HiBy R1)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.3.2)"
+        required: true
+        default: "v1.3.2"
+      title:
+        description: "Release title"
+        required: true
+        default: "SonixOS HUE v1.3.2 (HiBy R1)"
+
+permissions:
+  contents: write
+
+jobs:
+  build-r1:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build and firmware packing dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential wget curl git texinfo bison flex python3 perl \
+            p7zip-full squashfs-tools genisoimage \
+            libgmp-dev libmpfr-dev libmpc-dev autoconf automake libtool pkg-config
+
+      - name: Cache MIPS toolchain and target static libraries
+        uses: actions/cache@v4
+        with:
+          path: |
+            sonix-player/rockbox-toolchain
+            sonix-player/freetype-target
+            sonix-player/audio-target
+          key: ${{ runner.os }}-mips-toolchain-v1-${{ hashFiles('sonix-player/Makefile', 'sonix-player/rockboxdev/**') }}
+          restore-keys: |
+            ${{ runner.os }}-mips-toolchain-v1-
+
+      - name: Build target binary (sonix_player & sonix_launch)
+        working-directory: sonix-player
+        run: |
+          make target -j"$(nproc)"
+          ls -lh sonix_player sonix_launch
+
+      - name: Fetch base R1 firmware for packing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p sonix-packer
+          if ! gh release download --repo "${{ github.repository }}" --pattern "r1.upt" --output sonix-packer/r1_original.upt; then
+            gh release download --repo "Tartarus6/sonix-player" --pattern "r1.upt" --output sonix-packer/r1_original.upt
+          fi
+          ls -lh sonix-packer/r1_original.upt
+
+      - name: Pack HiBy R1 firmware (r1.upt)
+        working-directory: sonix-packer
+        run: |
+          cp ../sonix-player/sonix_player ./sonix_player
+          cp ../sonix-player/sonix_launch ./sonix_launch
+          ./sonix_firmware_packer.sh
+          ls -lh r1.upt
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          TITLE="${{ inputs.title }}"
+          NOTES=$(cat <<'EOF'
+          ## SonixOS HUE for HiBy R1
+
+          - **Live Hue & Saturation theming:** Fine-tune accent colour hue and saturation live in **Settings → Appearance**.
+          - **SD-card-only UI font picker:** Browse and select any `.ttf`/`.otf` font directly from your microSD card in **Settings → Appearance → UI font** (placeholder font names removed).
+          - **Enlarged slider touch targets:** Bigger tracks, knobs, and hit areas across all menus, Appearance sliders, MSEB, Metronome, Now Playing seek bar, and the Quick Panel pull-down brightness bar.
+          - **SonixOS HUE default boot splash:** 480×800 SonixOS HUE boot screen installed by default.
+          - **Install:** Copy `r1.upt` to the root of your microSD card, then go to **Settings → System → Update firmware → From SD card**.
+          EOF
+          )
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" sonix-packer/r1.upt --clobber --repo "${{ github.repository }}"
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES" --latest --repo "${{ github.repository }}"
+          else
+            gh release create "$TAG" sonix-packer/r1.upt --title "$TITLE" --notes "$NOTES" --latest --repo "${{ github.repository }}"
+          fi
